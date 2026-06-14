@@ -7,14 +7,20 @@ from routes.api import api
 app = Flask(__name__)
 CORS(app)
 
+# Initialize database when the application starts
+init_db()
+
+# Register API routes
 app.register_blueprint(api, url_prefix="/api")
 
 
 @app.route("/")
 def health():
-    return jsonify({"status": "ok", "service": "AI Job Description Analyzer & ATS Resume Matcher"})
+    return jsonify({
+        "status": "ok",
+        "service": "AI Job Description Analyzer & ATS Resume Matcher"
+    })
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(debug=True, port=5000)
