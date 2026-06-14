@@ -2,12 +2,11 @@ import re
 import io
 import PyPDF2
 import docx
-import spacy
 import nltk
 from nltk.corpus import stopwords
 
-# Download required NLTK data quietly (run-once)
-for pkg in ("punkt", "punkt_tab", "stopwords", "wordnet"):
+# Download required NLTK data quietly
+for pkg in ("stopwords",):
     try:
         nltk.data.find(f"corpora/{pkg}")
     except LookupError:
@@ -15,12 +14,6 @@ for pkg in ("punkt", "punkt_tab", "stopwords", "wordnet"):
             nltk.download(pkg, quiet=True)
         except Exception:
             pass
-
-try:
-    NLP = spacy.load("en_core_web_sm")
-except OSError:
-    # Fallback: blank English pipeline if model not downloaded
-    NLP = spacy.blank("en")
 
 try:
     STOPWORDS = set(stopwords.words("english"))
@@ -43,7 +36,6 @@ def extract_text_from_docx(file_stream) -> str:
 
 
 def extract_text(file_storage) -> str:
-    """Extract raw text from an uploaded file (PDF, DOCX, or plain text)."""
     filename = (file_storage.filename or "").lower()
     stream = io.BytesIO(file_storage.read())
 
@@ -63,19 +55,20 @@ def clean_text(text: str) -> str:
 
 
 def tokenize_and_lemmatize(text: str) -> list:
-    doc = NLP(text)
-    tokens = []
-    for token in doc:
-        if token.is_space or token.is_punct:
-            continue
-        lemma = token.lemma_.lower().strip()
-        if lemma and lemma not in STOPWORDS and len(lemma) > 1:
-            tokens.append(lemma)
-    return tokens
+    """
+    Simple tokenizer without spaCy.
+    """
+    text = clean_text(text)
+    tokens = text.split()
+
+    return [
+        token
+        for token in tokens
+        if token not in STOPWORDS and len(token) > 1
+    ]
 
 
 def extract_experience(text: str) -> str:
-    """Naive regex-based experience extraction (years)."""
     match = re.search(r"(\d+)\+?\s*(?:years|yrs)", text.lower())
     if match:
         return f"{match.group(1)}+ years"
@@ -94,8 +87,11 @@ def extract_education(text: str) -> str:
         "b.e": "Bachelor's Degree",
         "degree": "Degree Required",
     }
+
     text_lower = text.lower()
+
     for key, label in edu_keywords.items():
         if key in text_lower:
             return label
+
     return "Not specified"
