@@ -1,21 +1,28 @@
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from utils.text_processing import clean_text, tokenize_and_lemmatize, extract_experience, extract_education
+from utils.text_processing import (
+    clean_text,
+    tokenize_and_lemmatize,
+    extract_experience,
+    extract_education,
+)
 from services.jd_service import extract_skills, get_top_keywords
 
 
 def calculate_similarity(resume_text: str, jd_text: str) -> float:
-    """TF-IDF cosine similarity between resume and JD text."""
-    r_tokens = " ".join(tokenize_and_lemmatize(clean_text(resume_text)))
-    j_tokens = " ".join(tokenize_and_lemmatize(clean_text(jd_text)))
+    """
+    Simple similarity score based on common tokens.
+    Replaces sklearn TF-IDF + cosine similarity.
+    """
+    resume_tokens = set(tokenize_and_lemmatize(clean_text(resume_text)))
+    jd_tokens = set(tokenize_and_lemmatize(clean_text(jd_text)))
 
-    if not r_tokens or not j_tokens:
+    if not resume_tokens or not jd_tokens:
         return 0.0
 
-    vectorizer = TfidfVectorizer()
-    tfidf_matrix = vectorizer.fit_transform([r_tokens, j_tokens])
-    similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
-    return round(float(similarity) * 100, 2)
+    common = len(resume_tokens.intersection(jd_tokens))
+    total = len(resume_tokens.union(jd_tokens))
+
+    similarity = (common / total) * 100
+    return round(similarity, 2)
 
 
 def skill_match_score(resume_skills: list, jd_skills: list) -> dict:
@@ -28,8 +35,13 @@ def skill_match_score(resume_skills: list, jd_skills: list) -> dict:
     matched = sorted(resume_set & jd_set)
     missing = sorted(jd_set - resume_set)
 
-    score = round((len(matched) / len(jd_set)) * 100, 2) if jd_set else 0.0
-    return {"matched": matched, "missing": missing, "score": score}
+    score = round((len(matched) / len(jd_set)) * 100, 2)
+
+    return {
+        "matched": matched,
+        "missing": missing,
+        "score": score,
+    }
 
 
 def experience_match_score(resume_text: str, jd_text: str) -> dict:
@@ -39,18 +51,24 @@ def experience_match_score(resume_text: str, jd_text: str) -> dict:
     def years(s):
         try:
             return int(s.split("+")[0])
-        except (ValueError, IndexError):
+        except:
             return None
 
-    r_years, j_years = years(resume_exp), years(jd_exp)
+    r_years = years(resume_exp)
+    j_years = years(jd_exp)
+
     if r_years is None or j_years is None:
-        score = 50.0  # neutral score when unknown
+        score = 50.0
     elif r_years >= j_years:
         score = 100.0
     else:
-        score = round((r_years / j_years) * 100, 2) if j_years else 50.0
+        score = round((r_years / j_years) * 100, 2)
 
-    return {"resume_experience": resume_exp, "jd_experience": jd_exp, "score": score}
+    return {
+        "resume_experience": resume_exp,
+        "jd_experience": jd_exp,
+        "score": score,
+    }
 
 
 def education_match_score(resume_text: str, jd_text: str) -> dict:
@@ -66,33 +84,57 @@ def education_match_score(resume_text: str, jd_text: str) -> dict:
     else:
         score = 40.0
 
-    return {"resume_education": resume_edu, "jd_education": jd_edu, "score": score}
+    return {
+        "resume_education": resume_edu,
+        "jd_education": jd_edu,
+        "score": score,
+    }
 
 
 def keyword_coverage_score(resume_text: str, jd_text: str) -> float:
     jd_keywords = {k["keyword"] for k in get_top_keywords(jd_text, top_n=20)}
+
     if not jd_keywords:
         return 0.0
+
     resume_clean = clean_text(resume_text)
-    covered = sum(1 for kw in jd_keywords if kw in resume_clean)
+
+    covered = sum(
+        1 for kw in jd_keywords
+        if kw in resume_clean
+    )
+
     return round((covered / len(jd_keywords)) * 100, 2)
 
 
 def generate_recommendations(missing_skills: list, scoring: dict) -> list:
     recs = []
+
     if missing_skills:
-        top_missing = missing_skills[:5]
         recs.append(
-            f"Add these missing skills if you have experience with them: {', '.join(top_missing)}."
+            f"Add these missing skills if you have experience with them: {', '.join(missing_skills[:5])}."
         )
+
     if scoring["experience"]["score"] < 70:
-        recs.append("Highlight more years of relevant work experience or quantify project durations.")
+        recs.append(
+            "Highlight more years of relevant work experience or quantify project durations."
+        )
+
     if scoring["education"]["score"] < 70:
-        recs.append("Ensure your education section matches the qualification level required by the JD.")
+        recs.append(
+            "Ensure your education section matches the qualification level required by the JD."
+        )
+
     if scoring["keyword_coverage"] < 50:
-        recs.append("Incorporate more keywords from the job description naturally into your resume.")
+        recs.append(
+            "Incorporate more keywords from the job description naturally into your resume."
+        )
+
     if not recs:
-        recs.append("Your resume is well-aligned with this job description. Consider minor formatting improvements.")
+        recs.append(
+            "Your resume is well-aligned with this job description."
+        )
+
     return recs
 
 
@@ -103,18 +145,10 @@ def match_resume_to_jd(resume_text: str, jd_text: str) -> dict:
     skills_result = skill_match_score(resume_skills, jd_skills)
     exp_result = experience_match_score(resume_text, jd_text)
     edu_result = education_match_score(resume_text, jd_text)
+
     keyword_cov = keyword_coverage_score(resume_text, jd_text)
     similarity = calculate_similarity(resume_text, jd_text)
 
-    scoring = {
-        "skills_match": skills_result["score"],
-        "experience": exp_result,
-        "education": edu_result,
-        "keyword_coverage": keyword_cov,
-        "text_similarity": similarity,
-    }
-
-    # Weighted overall match score
     overall = (
         skills_result["score"] * 0.45
         + exp_result["score"] * 0.15
@@ -122,9 +156,17 @@ def match_resume_to_jd(resume_text: str, jd_text: str) -> dict:
         + keyword_cov * 0.15
         + similarity * 0.15
     )
+
     overall = round(overall, 2)
 
-    recommendations = generate_recommendations(skills_result["missing"], scoring)
+    recommendations = generate_recommendations(
+        skills_result["missing"],
+        {
+            "experience": exp_result,
+            "education": edu_result,
+            "keyword_coverage": keyword_cov,
+        },
+    )
 
     return {
         "match_score": overall,
